@@ -22,6 +22,7 @@
       from { transform: translateY(100vh); }
       to   { transform: translateY(-10px); }
     }
+    
     body {
       margin: 0;
       background: #000;
@@ -33,7 +34,10 @@
       display: flex;
       flex-direction: column;
       align-items: center;
+      /* Prevent pull-to-refresh on mobile */
+      overscroll-behavior: none; 
     }
+
     canvas {
       display: block;
       background: #000000;
@@ -41,8 +45,17 @@
       box-shadow: 0 0 20px rgb(255, 195, 65);
       z-index: 5;
       position: relative;
-      margin-top: 20px;
+      margin-top: 5vh;
+      border-radius: 8px;
+
+      /* --- RESPONSIVE CSS --- */
+      width: 95vw;             /* Takes up 95% of the screen width on small devices */
+      max-width: 320px;        /* Prevents getting too massive on Desktop */
+      height: auto;            /* Scales height automatically... */
+      aspect-ratio: 2 / 3;     /* ...while maintaining the strict 320x480 internal ratio */
+      touch-action: none;      /* Disables browser touch actions like zooming/panning */
     }
+
     .overlay {
       position: absolute;
       top: 0; left: 0;
@@ -55,16 +68,33 @@
       animation: scanline 0.1s steps(1) infinite;
       z-index: 10;
     }
+
+    /* Responsive text formatting */
     #msg, #instruction, #gameOverText, #restartHint {
       text-align: center;
-      margin: 5px 0;
+      margin: 10px 0;
       position: relative;
       z-index: 11;
       line-height: 1.4;
+      max-width: 90vw; /* Keeps text inside screen bounds */
+      padding: 0 10px;
     }
-    #msg { font-size: 1.2em; animation: blink 1s step-end infinite; }
-    #instruction { font-size: 1em; color: #aaa; animation: none; }
-    #gameOverText, #restartHint { display: none; color: red; font-size: 1.1em; }
+
+    #msg { 
+      font-size: clamp(1rem, 5vw, 1.2rem); 
+      animation: blink 1s step-end infinite; 
+    }
+    #instruction { 
+      font-size: clamp(0.85rem, 4vw, 1rem); 
+      color: #aaa; 
+      animation: none; 
+    }
+    #gameOverText, #restartHint { 
+      display: none; 
+      color: red; 
+      font-size: clamp(1rem, 5vw, 1.1rem); 
+    }
+
     .spooky {
       position: absolute;
       top: 0; left: 0;
@@ -73,6 +103,7 @@
       overflow: hidden;
       z-index: 1;
     }
+
     .spooky .particle {
       position: absolute;
       bottom: -5px;
@@ -88,6 +119,7 @@
 <!-- Spooky ambient particles floating -->
 <div class="spooky" id="spooky"></div>
 
+<!-- Internal resolution stays fixed, only the CSS scales it -->
 <canvas id="gameCanvas" width="320" height="480"></canvas>
 <div class="overlay"></div>
 <div id="msg"></div>
@@ -172,7 +204,7 @@
       resetGameVars();
       gameOverText.innerHTML = "🔒 LOCKED 🔒";
       gameOverText.style.display = 'block';
-      restartHint.innerHTML = "You have used all your attempts! Better luck next time";
+      restartHint.innerHTML = "You have used all your attempts! Better luck next time.";
       restartHint.style.display = 'block';
       msg.style.display = 'none';
       instruction.style.display = 'none';
@@ -214,7 +246,7 @@
     let dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
-    // UPDATE 1: Cap delta time to make animations smoothly survive tab-switching
+    // Cap delta time to make animations smoothly survive tab-switching
     if (dt > 0.1) dt = 0.1;
 
     if (gameState === 'DEMO_PLAY' || gameState === 'MAIN_PLAY') {
@@ -240,7 +272,7 @@
       } else {
         score += dt * 10;
 
-        // UPDATE 2: Win condition (140 score) only applies in Main Game
+        // Win condition (140 score) only applies in Main Game
         if (gameState === 'MAIN_PLAY' && score >= WIN_SCORE) {
           gameState = 'WON';
           window.location.href = 'congo.html';
@@ -311,7 +343,7 @@
     } else if (gameState === 'DEMO_OVER' && restartReady) {
       startMainGameCheck();
     } else if (gameState === 'MAIN_START') {
-      // UPDATE 3: Deduct Attempt on Main Game Start and Save to Local Cache
+      // Deduct Attempt on Main Game Start and Save to Local Cache
       attemptsLeft--;
       localStorage.setItem('juktiFlappyAttempts', attemptsLeft);
 
@@ -326,10 +358,13 @@
     }
   }
 
-  // Controls
-  canvas.addEventListener('mousedown', () => handleTap(false));
-  canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
+  // Changed to listen to `document` so users can tap ANYWHERE on the screen (great for mobile)
+  document.addEventListener('mousedown', () => handleTap(false));
+  document.addEventListener('touchstart', e => {
+    // Only prevent default if they are tapping directly on the canvas to stop scrolling
+    if (e.target === canvas) {
+      e.preventDefault();
+    }
     handleTap(true);
   }, { passive: false });
 
