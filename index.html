@@ -48,8 +48,8 @@
       top: 0; left: 0;
       width: 100%; height: 100%;
       background: repeating-linear-gradient(
-        transparent 0 2px,
-        rgba(177, 146, 89, 0.2) 2px 4px
+              transparent 0 2px,
+              rgba(177, 146, 89, 0.2) 2px 4px
       );
       pointer-events: none;
       animation: scanline 0.1s steps(1) infinite;
@@ -60,6 +60,7 @@
       margin: 5px 0;
       position: relative;
       z-index: 11;
+      line-height: 1.4;
     }
     #msg { font-size: 1.2em; animation: blink 1s step-end infinite; }
     #instruction { font-size: 1em; color: #aaa; animation: none; }
@@ -84,162 +85,262 @@
   </style>
 </head>
 <body>
-  <!-- Spooky ambient particles floating -->
-  <div class="spooky" id="spooky"></div>
+<!-- Spooky ambient particles floating -->
+<div class="spooky" id="spooky"></div>
 
-  <canvas id="gameCanvas" width="320" height="480"></canvas>
-  <div class="overlay"></div>
-  <div id="msg">Press or Tap to Flap!</div>
-  <div id="instruction">Score 250 to move to win the challenge. Avoid the Orange pipes!</div>
-  <div id="gameOverText">💀 GAME OVER 💀</div>
-  <div id="restartHint">Tap to Restart</div>
+<canvas id="gameCanvas" width="320" height="480"></canvas>
+<div class="overlay"></div>
+<div id="msg"></div>
+<div id="instruction"></div>
+<div id="gameOverText">💀 GAME OVER 💀</div>
+<div id="restartHint">Tap to Restart</div>
 
-  <script>
-    // Generate spooky particles
-    const spookyContainer = document.getElementById('spooky');
-    const particleCount = 40;
-    for (let i = 0; i < particleCount; i++) {
-      const p = document.createElement('div');
-      p.classList.add('particle');
-      const size = Math.random() * 6 + 4;
-      const left = Math.random() * 100;
-      const duration = Math.random() * 10 + 5;
-      const delay = Math.random() * -15;
-      p.style.width = `${size}px`;
-      p.style.height = `${size}px`;
-      p.style.left = `${left}vw`;
-      p.style.animationDuration = `${duration}s`;
-      p.style.animationDelay = `${delay}s`;
-      spookyContainer.appendChild(p);
+<script>
+  // Generate spooky particles
+  const spookyContainer = document.getElementById('spooky');
+  const particleCount = 40;
+  for (let i = 0; i < particleCount; i++) {
+    const p = document.createElement('div');
+    p.classList.add('particle');
+    const size = Math.random() * 6 + 4;
+    const left = Math.random() * 100;
+    const duration = Math.random() * 10 + 5;
+    const delay = Math.random() * -15;
+    p.style.width = `${size}px`;
+    p.style.height = `${size}px`;
+    p.style.left = `${left}vw`;
+    p.style.animationDuration = `${duration}s`;
+    p.style.animationDelay = `${delay}s`;
+    spookyContainer.appendChild(p);
+  }
+
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msg = document.getElementById('msg');
+  const instruction = document.getElementById('instruction');
+  const gameOverText = document.getElementById('gameOverText');
+  const restartHint = document.getElementById('restartHint');
+
+  // Game Physics & Config
+  const GRAVITY = 900;      // px/s²
+  const FLAP = -400;        // px/s impulse
+  const MOBILE_FLAP_FACTOR = 0.87; // 80% flap on touch
+  const MAX_ATTEMPTS = 3;   // Maximum allowed tries for the Main Game
+  const WIN_SCORE = 140;    // Score required to win
+
+  // Game State Variables
+  let birdY = 150, birdV = 0;
+  let pipes = [], score = 0;
+  let lastTime = null;
+  let restartReady = false;
+  let attemptsLeft = MAX_ATTEMPTS;
+
+  // State Machine: 'DEMO_START', 'DEMO_PLAY', 'DEMO_OVER', 'MAIN_START', 'MAIN_PLAY', 'MAIN_OVER', 'LOCKED', 'WON'
+  let gameState = 'DEMO_START';
+
+  function resetGameVars() {
+    birdY = 150; birdV = 0; pipes = [];
+    score = 0; lastTime = null;
+    restartReady = false;
+    createPipe();
+  }
+
+  function initDemo() {
+    resetGameVars();
+    gameState = 'DEMO_START';
+    msg.innerHTML = "DEMO MODE<br>Tap to Flap!";
+    msg.style.display = 'block';
+    instruction.innerHTML = "Practice mode. Get a feel for the gravity! Score will not be counted";
+    instruction.style.display = 'block';
+    gameOverText.style.display = 'none';
+    restartHint.style.display = 'none';
+  }
+
+  function startMainGameCheck() {
+    // Check cache for attempts
+    let storedAttempts = localStorage.getItem('juktiFlappyAttempts');
+    if (storedAttempts === null) {
+      attemptsLeft = MAX_ATTEMPTS;
+      localStorage.setItem('juktiFlappyAttempts', attemptsLeft);
+    } else {
+      attemptsLeft = parseInt(storedAttempts);
     }
 
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const msg = document.getElementById('msg');
-    const gameOverText = document.getElementById('gameOverText');
-    const restartHint = document.getElementById('restartHint');
-
-    let birdY = 150, birdV = 0;
-    const GRAVITY = 900;      // px/s²
-    const FLAP = -400;        // px/s impulse
-    const MOBILE_FLAP_FACTOR = 0.87; // 80% flap on touch
-
-    let pipes = [], score = 0;
-    let gameOver = false, started = false, restartReady = false;
-    let lastTime = null;
-
-    function resetGame() {
-      birdY = 150; birdV = 0; pipes = [];
-      score = 0; gameOver = false; started = false;
-      restartReady = false; lastTime = null;
-      gameOverText.style.display = 'none';
-      restartHint.style.display = 'none';
-      msg.style.display = '';
+    // Lockout if out of attempts
+    if (attemptsLeft <= 0) {
+      gameState = 'LOCKED';
+      resetGameVars();
+      gameOverText.innerHTML = "🔒 LOCKED 🔒";
+      gameOverText.style.display = 'block';
+      restartHint.innerHTML = "You have used all your attempts! Better luck next time";
+      restartHint.style.display = 'block';
+      msg.style.display = 'none';
+      instruction.style.display = 'none';
+      return;
     }
 
-    function createPipe() {
-      const topHeight = Math.random() * 180 + 80;
-      const gap = 120;
-      pipes.push({ x: 320, top: topHeight, bottom: topHeight + gap });
-    }
+    resetGameVars();
+    gameState = 'MAIN_START';
+    msg.innerHTML = `MAIN GAME<br>Attempts left: ${attemptsLeft}<br>Tap to Start!`;
+    msg.style.display = 'block';
+    instruction.innerHTML = `Score ${WIN_SCORE} to win the challenge!`;
+    instruction.style.display = 'block';
+    gameOverText.style.display = 'none';
+    restartHint.style.display = 'none';
+  }
 
-    function updatePipes(dt) {
-      pipes.forEach(pipe => pipe.x -= 100 * dt);
-      if (pipes.length && pipes[0].x < -30) pipes.shift();
-      if (!pipes.length || pipes[pipes.length - 1].x < 200) createPipe();
-    }
+  function createPipe() {
+    const topHeight = Math.random() * 180 + 80;
+    const gap = 120;
+    pipes.push({ x: 320, top: topHeight, bottom: topHeight + gap });
+  }
 
-    function checkCollision() {
-      if (birdY < 0 || birdY > canvas.height) return true;
-      return pipes.some(pipe =>
-        pipe.x < 60 && pipe.x + 30 > 40 &&
-        (birdY < pipe.top || birdY > pipe.bottom)
-      );
-    }
+  function updatePipes(dt) {
+    pipes.forEach(pipe => pipe.x -= 100 * dt);
+    if (pipes.length && pipes[0].x < -30) pipes.shift();
+    if (!pipes.length || pipes[pipes.length - 1].x < 200) createPipe();
+  }
 
-    function gameLoop(timestamp) {
-      if (!lastTime) lastTime = timestamp;
-      const dt = (timestamp - lastTime) / 1000;
-      lastTime = timestamp;
+  function checkCollision() {
+    if (birdY < 0 || birdY > canvas.height) return true;
+    return pipes.some(pipe =>
+            pipe.x < 60 && pipe.x + 30 > 40 &&
+            (birdY < pipe.top || birdY > pipe.bottom)
+    );
+  }
 
-      if (started && !gameOver) {
-        birdV += GRAVITY * dt;
-        birdY += birdV * dt;
-        updatePipes(dt);
-        if (checkCollision()) {
-          gameOver = true;
-          gameOverText.style.display = 'block';
-          restartHint.style.display = 'block';
-          msg.style.display = 'none';
-          setTimeout(() => restartReady = true, 500);
+  function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    let dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    // UPDATE 1: Cap delta time to make animations smoothly survive tab-switching
+    if (dt > 0.1) dt = 0.1;
+
+    if (gameState === 'DEMO_PLAY' || gameState === 'MAIN_PLAY') {
+      birdV += GRAVITY * dt;
+      birdY += birdV * dt;
+      updatePipes(dt);
+
+      if (checkCollision()) {
+        // Crash Logic Check
+        if (gameState === 'DEMO_PLAY') {
+          gameState = 'DEMO_OVER';
+          localStorage.setItem('juktiFlappyDemoPlayed', 'true'); // Save that demo is done
+          gameOverText.innerHTML = "DEMO FINISHED";
+          restartHint.innerHTML = "Tap to begin Main Game";
+        } else {
+          gameState = 'MAIN_OVER';
+          gameOverText.innerHTML = "💀 GAME OVER 💀";
+          restartHint.innerHTML = `Tap to Restart`;
+        }
+        gameOverText.style.display = 'block';
+        restartHint.style.display = 'block';
+        setTimeout(() => restartReady = true, 800); // Prevent accidental double-taps
+      } else {
+        score += dt * 10;
+
+        // UPDATE 2: Win condition (140 score) only applies in Main Game
+        if (gameState === 'MAIN_PLAY' && score >= WIN_SCORE) {
+          gameState = 'WON';
+          window.location.href = 'congo.html';
         }
       }
-
-      // draw
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawPipes();
-      drawBird();
-
-      if (started && !gameOver) {
-        score += dt * 10;
-        if (score >= 250) window.location.href = 'congo.html';
-      }
-
-      ctx.fillStyle = '#f0b373';
-      ctx.font = '16px Courier New';
-      ctx.fillText(`Score: ${Math.floor(score)}`, 10, 20);
-
-      requestAnimationFrame(gameLoop);
     }
 
-    function drawPipes() {
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = '#f0b373';
-      pipes.forEach(pipe => {
-        const alpha = 0.7 + Math.random() * 0.3;
-        ctx.fillStyle = `rgba(255,114,0,${alpha})`;
-        ctx.fillRect(pipe.x, 0, 30, pipe.top);
-        ctx.fillRect(pipe.x, pipe.bottom, 30, canvas.height - pipe.bottom);
-      });
-      ctx.shadowBlur = 0;
+    // draw
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawPipes();
+    drawBird();
+
+    // Draw UI Score
+    ctx.fillStyle = '#f0b373';
+    ctx.font = '16px Courier New';
+    if (gameState.includes('DEMO')) {
+      ctx.fillText(`Demo Score: ${Math.floor(score)}`, 10, 20);
+    } else if (gameState.includes('MAIN')) {
+      ctx.fillText(`Score: ${Math.floor(score)} / ${WIN_SCORE}`, 10, 20);
     }
 
-    const birdImg = new Image();
-    birdImg.src = 'https://static0.polygonimages.com/wordpress/wp-content/uploads/2025/12/frieren-looking-up-in-the-trailer-for-season-2.jpg?w=600&h=600&fit=crop';
-    function drawBird() {
-      const angle = Math.max(Math.min(birdV / 300, 0.5), -0.5);
-      ctx.save();
-      ctx.translate(50, birdY);
-      ctx.rotate(angle);
-      if (birdImg.complete) {
-      ctx.drawImage(birdImg, -10, -10, 20, 20);} 
-      else {
-        ctx.fillStyle = `rgba(255, 0, 255, ${0.8 + Math.random()*0.2})`;}
-      ctx.fillRect(-10, -10, 20, 20);
-      ctx.restore();
-    }
-
-    function flap(isTouch) {
-      const impulse = FLAP * (isTouch ? MOBILE_FLAP_FACTOR : 1);
-      birdV = impulse;
-    }
-
-    canvas.addEventListener('mousedown', () => {
-      if (!started) { started = true; msg.style.display = 'none'; }
-      if (!gameOver) flap(false);
-      else if (restartReady) resetGame();
-    });
-
-    canvas.addEventListener('touchstart', e => {
-      e.preventDefault();
-      if (!started) { started = true; msg.style.display = 'none'; }
-      if (!gameOver) flap(true);
-      else if (restartReady) resetGame();
-    });
-
-    // init
-    createPipe();
     requestAnimationFrame(gameLoop);
-  </script>
+  }
+
+  function drawPipes() {
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#f0b373';
+    pipes.forEach(pipe => {
+      const alpha = 0.7 + Math.random() * 0.3;
+      ctx.fillStyle = `rgba(255,114,0,${alpha})`;
+      ctx.fillRect(pipe.x, 0, 30, pipe.top);
+      ctx.fillRect(pipe.x, pipe.bottom, 30, canvas.height - pipe.bottom);
+    });
+    ctx.shadowBlur = 0;
+  }
+
+  const birdImg = new Image();
+  birdImg.src = 'https://static0.polygonimages.com/wordpress/wp-content/uploads/2025/12/frieren-looking-up-in-the-trailer-for-season-2.jpg?w=600&h=600&fit=crop';
+  function drawBird() {
+    const angle = Math.max(Math.min(birdV / 300, 0.5), -0.5);
+    ctx.save();
+    ctx.translate(50, birdY);
+    ctx.rotate(angle);
+    if (birdImg.complete) {
+      ctx.drawImage(birdImg, -10, -10, 20, 20);
+    } else {
+      ctx.fillStyle = `rgba(255, 0, 255, ${0.8 + Math.random()*0.2})`;
+      ctx.fillRect(-10, -10, 20, 20);
+    }
+    ctx.restore();
+  }
+
+  function flap(isTouch) {
+    const impulse = FLAP * (isTouch ? MOBILE_FLAP_FACTOR : 1);
+    birdV = impulse;
+  }
+
+  function handleTap(isTouch) {
+    if (gameState === 'LOCKED' || gameState === 'WON') return;
+
+    if (gameState === 'DEMO_START') {
+      gameState = 'DEMO_PLAY';
+      msg.style.display = 'none';
+      instruction.style.display = 'none';
+      flap(isTouch);
+    } else if (gameState === 'DEMO_PLAY') {
+      flap(isTouch);
+    } else if (gameState === 'DEMO_OVER' && restartReady) {
+      startMainGameCheck();
+    } else if (gameState === 'MAIN_START') {
+      // UPDATE 3: Deduct Attempt on Main Game Start and Save to Local Cache
+      attemptsLeft--;
+      localStorage.setItem('juktiFlappyAttempts', attemptsLeft);
+
+      gameState = 'MAIN_PLAY';
+      msg.style.display = 'none';
+      instruction.style.display = 'none';
+      flap(isTouch);
+    } else if (gameState === 'MAIN_PLAY') {
+      flap(isTouch);
+    } else if (gameState === 'MAIN_OVER' && restartReady) {
+      startMainGameCheck();
+    }
+  }
+
+  // Controls
+  canvas.addEventListener('mousedown', () => handleTap(false));
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    handleTap(true);
+  }, { passive: false });
+
+  // Initialize logic
+  let demoPlayed = localStorage.getItem('juktiFlappyDemoPlayed') === 'true';
+  if (!demoPlayed) {
+    initDemo();
+  } else {
+    startMainGameCheck();
+  }
+  requestAnimationFrame(gameLoop);
+</script>
 </body>
 </html>
